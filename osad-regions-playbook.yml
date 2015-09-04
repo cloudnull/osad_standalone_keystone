@@ -1,0 +1,162 @@
+
+
+- name: Create an OSAD Identity Install
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  user: root
+  tasks:
+    - name: launch an instance
+      nova_compute:
+        name: "{{ login_username }}-{{ region_name }}-{{ item }}"
+        state: present
+        login_username: "{{ login_username }}"
+        login_password: "{{ login_password }}"
+        login_tenant_name: "{{ login_tenant_name }}"
+        auth_url: "{{ auth_url }}"
+        region_name: "{{ region_name | capitalize }}"
+        image_name: Ubuntu 14.04 LTS (Trusty Tahr) (PVHVM)
+        flavor_ram: 4096
+        flavor_include: Performance
+        key_name: "{{ os_keyname }}"
+      with_items:
+        - Identity
+      register: nova_hosts
+      tags:
+        - setup-identity
+        - setup-hosts
+        - setup-regions
+        - setup
+    - name: Load inventory
+      add_host:
+        hostname: "{{ item.info.name.split('-')[-1] }}"
+        ansible_ssh_host: "{{ item.info.accessIPv4 }}"
+        ansible_ssh_port: "22"
+        groups: os_nodes
+      with_items: nova_hosts.results
+      tags:
+        - setup-identity
+        - setup-hosts
+        - setup-regions
+        - setup
+    - name: Wait for ssh
+      wait_for:
+        port: 22
+        host: "{{ item.info.accessIPv4 }}"
+        search_regex: OpenSSH
+        delay: 10
+      with_items: nova_hosts.results
+      tags:
+        - setup-identity
+        - setup-hosts
+        - setup-regions
+        - setup
+  vars:
+    login_username: "{{ os_username }}"
+    login_password: "{{ os_password }}"
+    login_tenant_name: "{{ os_tenant_name }}"
+    region_name: "{{ os_region_name }}"
+    auth_url: "{{ os_auth_url | default('https://identity.api.rackspacecloud.com/v2.0/') }}"
+
+
+- name: Setup hosts
+  hosts: os_nodes
+  gather_facts: false
+  user: root
+  tasks:
+    - name: Install base packages
+      apt:
+        name: "{{ item }}"
+        update_cache: "yes"
+        cache_valid_time: "3600"
+      with_items:
+        - vim
+        - tmux
+        - git
+        - curl
+      tags:
+        - setup-hosts
+    - name: Clone OSAD into place
+      git:
+        repo: "{{ git_repo }}"
+        dest: /opt/os-ansible-deployment
+        update: yes
+        force: yes
+        version: "{{ git_branch }}"
+      failed_when: false
+      tags:
+        - setup-hosts
+    - name: Bootstrap ansible Ansible
+      command: scripts/bootstrap-ansible.sh
+      args:
+        chdir: /opt/os-ansible-deployment
+        creates: /usr/local/bin/openstack-ansible
+      tags:
+        - setup-hosts
+    - name: Bootstrap ansible AIO
+      command: scripts/bootstrap-aio.sh
+      args:
+        chdir: /opt/os-ansible-deployment
+        creates: /etc/openstack_deploy/openstack_user_config.yml
+      tags:
+        - setup-hosts
+  vars:
+    git_branch: "master"
+    git_repo: "{{ osad_repo | default('https://github.com/stackforge/os-ansible-deployment') }}"
+
+
+- name: Setup Identity Hosts
+  hosts: Identity
+  gather_facts: false
+  user: root
+  tasks:
+    - name: remove bootstrapped openstack_user_config
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /etc/openstack_deploy/conf.d/swift.yml
+        - /etc/openstack_deploy/conf.d/ceilometer.yml
+      tags:
+        - setup-identity
+        - identity-config
+    - name: Replace user config
+      template:
+        src: templates/openstack_user_config_identity.yml.j2
+        dest: /etc/openstack_deploy/openstack_user_config.yml
+      tags:
+        - setup-identity
+        - identity-config
+    - name: Drop user config file
+      template:
+        src: templates/identity.yml.j2
+        dest: /etc/openstack_deploy/conf.d/identity.yml
+      tags:
+        - setup-identity
+        - identity-config
+    - name: Drop user keystone config file
+      template:
+        src: templates/user_region_identity.yml.j2
+        dest: /etc/openstack_deploy/user_region_identity.yml
+      tags:
+        - setup-identity
+        - identity-config
+    - name: Run playbooks identity
+      command: "openstack-ansible {{ item }}"
+      args:
+        chdir: /opt/os-ansible-deployment/playbooks
+      with_items:
+        - "setup-hosts.yml"
+        - "haproxy-install.yml"
+        - "repo-install.yml"
+        - "memcached-install.yml"
+        - "galera-install.yml"
+        - "rabbitmq-install.yml"
+        - "utility-install.yml"
+        - "rsyslog-install.yml"
+        - "os-keystone-install.yml"
+      tags:
+        - setup-identity
+  vars:
+    login_username: "{{ os_username }}"
+    region_name: "{{ os_region_name }}"

@@ -1,0 +1,23 @@
+---
+
+shared-infra_hosts:
+    {{ inventory_hostname }}:
+        ip: 172.29.236.100
+
+repo-infra_hosts:
+    {{ inventory_hostname }}:
+        ip: 172.29.236.100
+
+identity_hosts:
+    {{ inventory_hostname }}:
+        affinity:
+            keystone_container: 3
+        ip: 172.29.236.100
+
+log_hosts:
+    {{ inventory_hostname }}:
+        ip: 172.29.236.100
+
+haproxy_hosts:
+    {{ inventory_hostname }}:
+        ip: 172.29.236.100
